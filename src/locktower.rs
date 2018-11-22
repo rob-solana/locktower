@@ -1,5 +1,5 @@
-use std::collections::VecDeque;
 use std::collections::HashMap;
+use std::collections::VecDeque;
 
 #[derive(Clone, Default)]
 pub struct Branch {
@@ -8,7 +8,7 @@ pub struct Branch {
 }
 
 impl Branch {
-    fn is_derived(&self, other: &Branch, branch_tree: &HashMap<usize,Branch>) -> bool {
+    fn is_derived(&self, other: &Branch, branch_tree: &HashMap<usize, Branch>) -> bool {
         let mut current = other.clone();
         loop {
             if current.id == self.id {
@@ -31,12 +31,16 @@ pub struct Vote {
 
 impl Vote {
     pub fn new(branch: Branch, height: usize) -> Vote {
-        Self {branch, height, lockout: 2}
+        Self {
+            branch,
+            height,
+            lockout: 2,
+        }
     }
     pub fn lock_height(&self) -> usize {
-        self.height + self.lockout 
+        self.height + self.lockout
     }
-    pub fn is_derived(&self, other: &Vote, branch_tree: &HashMap<usize,Branch>) -> bool {
+    pub fn is_derived(&self, other: &Vote, branch_tree: &HashMap<usize, Branch>) -> bool {
         self.branch.is_derived(&other.branch, branch_tree)
     }
 }
@@ -49,10 +53,18 @@ struct VoteLocks {
 
 impl VoteLocks {
     fn new(max_size: usize, max_height: usize) -> Self {
-        VoteLocks { votes: VecDeque::new(), max_size, max_height}
+        VoteLocks {
+            votes: VecDeque::new(),
+            max_size,
+            max_height,
+        }
     }
     fn rollback(&mut self, height: usize) -> usize {
-        let num_old = self.votes.iter().take_while(|v| v.lock_height() < height).count();
+        let num_old = self
+            .votes
+            .iter()
+            .take_while(|v| v.lock_height() < height)
+            .count();
         for _ in 0..num_old {
             self.votes.pop_front();
         }
@@ -66,11 +78,11 @@ impl VoteLocks {
             v.lockout *= 2;
         }
         // push the new vote to the font
-        self.votes.push_front(vote); 
+        self.votes.push_front(vote);
     }
     fn pop_full(&mut self) {
         assert!(self.is_full());
-        let _ = self.votes.pop_back(); 
+        let _ = self.votes.pop_back();
     }
     fn is_full(&self) -> bool {
         self.votes.len() == self.max_size
@@ -81,13 +93,15 @@ impl VoteLocks {
     fn last_vote(&self) -> Option<&Vote> {
         self.votes.front()
     }
-    fn is_vote_valid(&self, vote: &Vote, branch_tree: &HashMap<usize,Branch>) -> bool {
-        self.last_vote().map(|v| v.is_derived(vote, branch_tree)).unwrap_or(true)
+    fn is_vote_valid(&self, vote: &Vote, branch_tree: &HashMap<usize, Branch>) -> bool {
+        self.last_vote()
+            .map(|v| v.is_derived(vote, branch_tree))
+            .unwrap_or(true)
     }
 }
 
 pub struct LockTower {
-    vote_locks: Vec<VoteLocks>
+    vote_locks: Vec<VoteLocks>,
 }
 
 pub const MAX_VOTES: usize = 32usize;
@@ -96,14 +110,19 @@ pub const FINALITY_DEPTH: usize = 8;
 impl Default for LockTower {
     fn default() -> Self {
         let mut vote_locks = Vec::new();
-        vote_locks.push(VoteLocks::new(MAX_VOTES, 1<<MAX_VOTES));
+        vote_locks.push(VoteLocks::new(MAX_VOTES, 1 << MAX_VOTES));
         Self { vote_locks }
     }
 }
 
 impl LockTower {
     fn rollback(&mut self, height: usize) {
-        let num_old = self.vote_locks.iter().rev().take_while(|v| v.max_height < height).count();
+        let num_old = self
+            .vote_locks
+            .iter()
+            .rev()
+            .take_while(|v| v.max_height < height)
+            .count();
         for _ in 0..num_old {
             self.vote_locks.pop();
         }
@@ -126,7 +145,7 @@ impl LockTower {
     fn last_q(&mut self) -> &VoteLocks {
         self.vote_locks.last().unwrap()
     }
-    pub fn push_vote(&mut self, vote: Vote, branch_tree: &HashMap<usize,Branch>) {
+    pub fn push_vote(&mut self, vote: Vote, branch_tree: &HashMap<usize, Branch>) {
         self.rollback(vote.height);
         let num_old = self.last_q_mut().rollback(vote.height);
         if num_old > 0 && !self.last_q().is_empty() {
@@ -142,97 +161,42 @@ impl LockTower {
     }
 
     pub fn last_branch(&mut self) -> Branch {
-        self.last_q().last_vote().map(|v| v.branch.clone()).unwrap_or_default()
+        self.last_q()
+            .last_vote()
+            .map(|v| v.branch.clone())
+            .unwrap_or_default()
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::collections::HashMap;
-    use std::cmp;
 
-    fn create_network(sz: usize) -> Vec<Client>  {
-        (0..sz).into_iter().map(|_| Client::default()).collect()
+    fn create_network(sz: usize) -> Vec<LockTower> {
+        (0..sz).into_iter().map(|_| LockTower::default()).collect()
     }
-    fn create_finality_map(network: &Vec<Client>) -> HashMap<usize, Vec<usize>> {
-        let mut fins = HashMap::new();
-        for node in network {
-            for (i,v) in node.votes.iter().enumerate() {
-                let entry = fins.entry(v.branch_id).or_insert(vec![0usize; MAX_VOTES]);
-                entry[i] += v.lockout;
-            }
-        }
-        fins
-    }
-    fn calc_branch_finality(finmap: &HashMap<usize, Vec<usize>>, branch_id: usize) -> Vec<f64> {
-        finmap.get(&branch_id).map(|bfins| {
-            let totals = calc_totals(finmap);
-            totals.iter().zip(bfins).map(|x| (*x.1 as f64)/(*x.0 as f64)).collect()
-        }).unwrap_or(vec![1.0; MAX_VOTES])
-    }
-    fn calc_totals(finmap: &HashMap<usize, Vec<usize>>) -> Vec<usize> {
-        let mut totals = vec![0usize; MAX_VOTES];
-        for fins in finmap.values() {
-            for (i,f) in fins.iter().enumerate() {
-                totals[i] += *f;
-            }
-        }
-        totals
-    }
-    fn calc_maxes(finmap: &HashMap<usize, Vec<usize>>) -> Vec<usize> {
-        let mut maxes = vec![0usize; MAX_VOTES];
-        for fins in finmap.values() {
-            for (i,f) in fins.iter().enumerate() {
-                maxes[i] = cmp::max(maxes[i], *f);
-            }
-        }
-        maxes
-    }
- 
-    fn print_max(finmap: &HashMap<usize, Vec<usize>>) -> String {
-        let totals = calc_totals(finmap);
-        let maxes = calc_maxes(finmap);
-        let strs: Vec<String> = maxes.iter().zip(&totals).map(|x| format!("{}", (*x.0 as f64)/(*x.1 as f64))).collect();
+    fn print_depth(network: &Vec<LockTower>) -> String {
+        let strs: Vec<String> = network
+            .iter()
+            .map(|x| format!("{}", x.vote_locks.len()))
+            .collect();
         strs.join(" ")
     }
     #[test]
-    fn test_partitions() {
-        let mut network = create_network(100);
-        let num = 3;
-        let partition_time = 4;
-        let len = network.len();
-        for rounds in 0..partition_time {
+    fn test_no_partitions() {
+        let tree = HashMap::new();
+        let len = 100;
+        let mut network = create_network(len);
+        for rounds in 0..100 {
             for i in 0..network.len() {
                 let height = rounds * len + i;
-                let branch_id = i % num;
-                let vote = Vote::new(branch_id, height);
-                let fins = create_finality_map(&network);
-                let bfin = calc_branch_finality(&fins, branch_id);
-                for (j,node) in network.iter_mut().enumerate() {
-                    if j % num == branch_id { 
-                        node.accept_vote(&bfin, vote.clone());
-                    }
+                let branch = Branch { id: 0, prev: 0 };
+                let vote = Vote::new(branch, height);
+                for node in network.iter_mut() {
+                    node.push_vote(vote.clone(), &tree);
                 }
-                let fins = create_finality_map(&network);
-                println!("{} {}", height, print_max(&fins));
-            }
-        } 
-        let fins = create_finality_map(&network);
-        println!("{}", print_max(&fins));
-        for rounds in partition_time .. partition_time  {
-            for i in 0..network.len() {
-                let mut branch_id = network[i].last_branch_id();
-                let height = rounds * len + i;
-                let vote = Vote::new(branch_id, height);
-                let fins = create_finality_map(&network);
-                let bfin = calc_branch_finality(&fins, branch_id);
-                for node in &mut network {
-                    node.accept_vote(&bfin, vote.clone());
-                }
-                let fins = create_finality_map(&network);
-                println!("{} {}", height, print_max(&fins));
+                println!("{} {}", height, print_depth(&network));
             }
         }
-    } 
+    }
 }
