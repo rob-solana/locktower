@@ -297,8 +297,7 @@ mod test {
         let cmap = calc_converge_map(&network, &tree);
         assert_eq!(calc_converged(&cmap), len);
     }
-    #[test]
-    fn test_all_partitions() {
+    fn test_with_partitions(num_partitions: usize) {
         let mut tree = HashMap::new();
         let len = 100;
         let mut network = create_network(len);
@@ -306,10 +305,10 @@ mod test {
         let warmup = 7;
         for height in 0..warmup {
             let cmap = calc_converge_map(&network, &tree);
-            for (j, node) in network.iter_mut().enumerate() {
+            for node in network.iter_mut() {
                 let mut branch = node.last_branch().clone();
                 if branch.id == 0 {
-                    branch.id = j + 1;
+                    branch.id = thread_rng().gen_range(1, 1 + num_partitions);
                     tree.insert(branch.id, branch.clone());
                 }
                 let vote = Vote::new(branch, height);
@@ -322,14 +321,9 @@ mod test {
             assert_eq!(node.last_q().first_vote().unwrap().lockout, 1 << warmup);
             assert!(node.last_q().max_height > 1 << warmup);
             assert!(node.last_q().first_vote().unwrap().lock_height() >= 1 << warmup);
-            let common = network
-                .iter()
-                .filter(|n| node.last_branch().is_trunk_of(&n.last_branch(), &tree))
-                .count();
-            assert_eq!(common, 1);
         }
         let cmap = calc_converge_map(&network, &tree);
-        assert_eq!(calc_converged(&cmap), 1);
+        assert_ne!(calc_converged(&cmap), len);
         for rounds in 0..40 {
             for i in 0..len {
                 let height = warmup + rounds * len + i;
@@ -352,5 +346,17 @@ mod test {
         }
         let cmap = calc_converge_map(&network, &tree);
         assert_eq!(calc_converged(&cmap), len);
+    }
+    #[test]
+    fn test_all_partitions() {
+        test_with_partitions(100)
+    }
+    #[test]
+    fn test_2_partitions() {
+        test_with_partitions(2)
+    }
+    #[test]
+    fn test_3_partitions() {
+        test_with_partitions(3)
     }
 }
