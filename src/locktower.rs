@@ -1,12 +1,24 @@
 use std::collections::VecDeque;
+use std::collections::HashMap;
 
+#[derive(Clone, Default)]
 pub struct Branch {
-    branches: Vec<(usize, usize)>,
+    id: usize,
+    prev: usize,
 }
 
-pub impl Branch {
-    fn is_derived(&self, other: &Branch) {
-        self.branches.iter().zip(&other.branches).all(|(x,y)| x == y)
+impl Branch {
+    fn is_derived(&self, other: &Branch, branch_tree: &HashMap<usize,Branch>) -> bool {
+        let mut current = other.clone();
+        loop {
+            if current.id == self.id {
+                return true;
+            }
+            if branch_tree.get(&current.prev).is_none() {
+                return false;
+            }
+            current = branch_tree.get(&current.prev).unwrap().clone();
+        }
     }
 }
 
@@ -18,34 +30,36 @@ pub struct Vote {
 }
 
 impl Vote {
-    pub fn new(branch: Branch) -> Vote {
-        Vote {branch, lockout: 2}
+    pub fn new(branch: Branch, height: usize) -> Vote {
+        Self {branch, height, lockout: 2}
     }
     pub fn lock_height(&self) -> usize {
         self.height + self.lockout 
     }
+    pub fn is_derived(&self, other: &Vote, branch_tree: &HashMap<usize,Branch>) -> bool {
+        self.branch.is_derived(&other.branch, branch_tree)
+    }
 }
 
-struct VoteQ {
+struct VoteLocks {
     votes: VecDeque<Vote>,
     max_size: usize,
     max_height: usize,
 }
 
-impl VoteQ {
+impl VoteLocks {
     fn new(max_size: usize, max_height: usize) -> Self {
-        VoteQ { votes: VecDeque::new(), max_size, max_height}
+        VoteLocks { votes: VecDeque::new(), max_size, max_height}
     }
     fn rollback(&mut self, height: usize) -> usize {
-        let num_old = self.votes.iter().take_while(|v| v.lock_height() < vote.height).count();
+        let num_old = self.votes.iter().take_while(|v| v.lock_height() < height).count();
         for _ in 0..num_old {
             self.votes.pop_front();
         }
-        self.max_votes -= num_old;
         num_old
     }
-    fn push_front(&self, vote: Vote) {
-        assert!(vote.height <= vote.max_height);
+    fn push_vote(&mut self, vote: Vote) {
+        assert!(vote.height <= vote.height);
         assert!(!self.is_full());
         // double the previous lockouts
         for v in &mut self.votes {
@@ -54,77 +68,81 @@ impl VoteQ {
         // push the new vote to the font
         self.votes.push_front(vote); 
     }
-    fn pop_back(&mut self) {
+    fn pop_full(&mut self) {
         assert!(self.is_full());
         let _ = self.votes.pop_back(); 
     }
-    fn is_full(&self) {
-        self.votes.len() == MAX_VOTES
+    fn is_full(&self) -> bool {
+        self.votes.len() == self.max_size
+    }
+    fn is_empty(&self) -> bool {
+        self.votes.is_empty()
     }
     fn last_vote(&self) -> Option<&Vote> {
         self.votes.front()
     }
-    fn is_vote_valid(&self, vote: &Vote) -> bool {
-        // check that the vote is valid
-        for v in &self.votes {
-            if !v.branch.is_derived(&vote.branch) && v.lock_height() >= vote.height {
-                return false;
-            }
-        }
-        true
-    }
-    fn merge(&mut self, mut other: VoteQ) {
-        self.append(&mut other);
+    fn is_vote_valid(&self, vote: &Vote, branch_tree: &HashMap<usize,Branch>) -> bool {
+        self.last_vote().map(|v| v.is_derived(vote, branch_tree)).unwrap_or(true)
     }
 }
 
-pub struct Client {
-    queues: Vec<VoteQ>
+pub struct LockTower {
+    vote_locks: Vec<VoteLocks>
 }
 
 pub const MAX_VOTES: usize = 32usize;
 pub const FINALITY_DEPTH: usize = 8;
 
-impl Default for Client {
+impl Default for LockTower {
     fn default() -> Self {
-        let mut queues = Vec::new();
-        queues.push(VoteQ::new(MAX_VOTES, 1<<MAX_VOTES));
-        Client { queues }
+        let mut vote_locks = Vec::new();
+        vote_locks.push(VoteLocks::new(MAX_VOTES, 1<<MAX_VOTES));
+        Self { vote_locks }
     }
 }
 
-impl Client {
+impl LockTower {
     fn rollback(&mut self, height: usize) {
-        let num_old = self.queues.iter().rev().take_while(|v| v.max_height < height).count();
+        let num_old = self.vote_locks.iter().rev().take_while(|v| v.max_height < height).count();
         for _ in 0..num_old {
-            self.queues.pop();
+            self.vote_locks.pop();
         }
-        assert!(self.queues.is_empty());
+        assert!(self.vote_locks.is_empty());
     }
-    fn collapse(&mut self) -> {
+    fn collapse(&mut self) {
         loop {
-            if !self.queues.last().is_full() {
+            if !self.last_q().is_full() {
                 break;
             }
-            let full = self.queues.pop();
-            self.queues.last().merge(&mut full);
+            let full = self.vote_locks.pop().unwrap();
+            for v in full.votes.into_iter() {
+                self.last_q_mut().push_vote(v);
+            }
         }
     }
-    pub fn accept_vote(&mut self, vote: Vote) -> bool {
+    fn last_q_mut(&mut self) -> &mut VoteLocks {
+        self.vote_locks.last_mut().unwrap()
+    }
+    fn last_q(&mut self) -> &VoteLocks {
+        self.vote_locks.last().unwrap()
+    }
+    pub fn push_vote(&mut self, vote: Vote, branch_tree: &HashMap<usize,Branch>) {
         self.rollback(vote.height);
-        let num_old = self.queues.last().rollback(vote.height);
-        if num_old > 0 {
-            queues.push(VoteQ::new(num_old, vote.height + 1<<num_old));
+        let num_old = self.last_q_mut().rollback(vote.height);
+        if num_old > 0 && !self.last_q().is_empty() {
+            let max_height = self.last_q().last_vote().unwrap().lock_height();
+            self.vote_locks.push(VoteLocks::new(num_old, max_height));
         }
-        self.queues.last().push(vote);
+        self.last_q().is_vote_valid(&vote, branch_tree);
+        self.last_q_mut().push_vote(vote);
         self.collapse();
-        if self.queue.last().is_full() {
-            self.queue.last().pop_back();
+        if self.last_q().is_full() {
+            self.last_q_mut().pop_full();
         }
     }
 
-    pub fn last_branch(&self) -> Branch {
-        self.queues.last().last_vote().map(|v| v.branch.clone()).unwrap_or_default()
+    pub fn last_branch(&mut self) -> Branch {
+        self.last_q().last_vote().map(|v| v.branch.clone()).unwrap_or_default()
     }
 }
 
