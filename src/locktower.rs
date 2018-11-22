@@ -178,12 +178,18 @@ mod test {
     fn create_network(sz: usize) -> Vec<LockTower> {
         (0..sz).into_iter().map(|_| LockTower::default()).collect()
     }
+    /// count the number of nodes that are back at the trunk
     fn converged(network: &Vec<LockTower>) -> usize {
-        network
-            .iter()
-            .filter(|x| x.vote_locks.len() == 1)
-            .filter(|x| x.last_q().last_vote().is_none() || x.last_q().last_vote().unwrap().branch.id == 0)
-            .count()
+        let max_derived = 0;
+        for n in &network {
+            if n.last_q().last_vote().is_none() {
+                continue;
+            }
+            let branch = n.last_q().last_vote().unwrap().branch;
+            let derived = network.iter().filter(|x| !x.last_q().last_vote().is_none()).filter(|y| branch.is_derived(y.last_q().last_vote().unwrap().branch, branch_tree)).count();
+            max = cmp::max(max_derived, derived);
+        }
+        max_derived
     }
     #[test]
     fn test_no_partitions() {
