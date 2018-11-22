@@ -1,0 +1,12 @@
+[package]
+name = "locktower"
+description = "Algorithm for voting in Solana"
+version = "0.1.0
+homepage = "http://solana.com/"
+readme = "README.md"
+repository = "https://github.com/solana-labs/locktower"
+authors = ["Solana Maintainers <maintainers@solana.com>"]
+license = "Apache-2.0"
+
+[dependencies]
+rand = "0.5.1"
