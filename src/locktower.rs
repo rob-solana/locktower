@@ -174,20 +174,30 @@ impl LockTower {
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::cmp;
 
     fn create_network(sz: usize) -> Vec<LockTower> {
         (0..sz).into_iter().map(|_| LockTower::default()).collect()
     }
-    /// count the number of nodes that are back at the trunk
-    fn converged(network: &Vec<LockTower>) -> usize {
-        let max_derived = 0;
-        for n in &network {
+    /// find the max number of nodes that are on the same branch
+    fn converged(network: &Vec<LockTower>, branch_tree: &HashMap<usize, Branch>) -> usize {
+        let mut max_derived = 0;
+        let mut branches: HashMap<usize, bool> = HashMap::new();
+        for n in network {
             if n.last_q().last_vote().is_none() {
                 continue;
             }
-            let branch = n.last_q().last_vote().unwrap().branch;
-            let derived = network.iter().filter(|x| !x.last_q().last_vote().is_none()).filter(|y| branch.is_derived(y.last_q().last_vote().unwrap().branch, branch_tree)).count();
-            max = cmp::max(max_derived, derived);
+            let branch = &n.last_q().last_vote().unwrap().branch;
+            if branches.get(&branch.id).is_some() {
+                continue;
+            }
+            let derived = network
+                .iter()
+                .filter(|x| !x.last_q().last_vote().is_none())
+                .filter(|y| branch.is_derived(&y.last_q().last_vote().unwrap().branch, branch_tree))
+                .count();
+            branches.insert(branch.id, true);
+            max_derived = cmp::max(max_derived, derived);
         }
         max_derived
     }
@@ -204,7 +214,7 @@ mod test {
                 for node in network.iter_mut() {
                     node.push_vote(vote.clone(), &tree);
                 }
-                println!("{} {}", height, converged(&network));
+                println!("{} {}", height, converged(&network, &tree));
             }
         }
     }
