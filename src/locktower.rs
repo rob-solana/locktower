@@ -4,20 +4,27 @@ use std::collections::VecDeque;
 #[derive(Clone, Default)]
 pub struct Branch {
     id: usize,
-    prev: usize,
+    base: usize,
 }
 
 impl Branch {
     fn is_derived(&self, other: &Branch, branch_tree: &HashMap<usize, Branch>) -> bool {
         let mut current = other.clone();
         loop {
+            // found it
             if current.id == self.id {
                 return true;
             }
-            if branch_tree.get(&current.prev).is_none() {
+            // base is 0, and this id is 0
+            if current.base == 0 && self.id == 0 {
+                assert!(branch_tree.get(&0).is_none());
+                return true;
+            } 
+            // base is 0
+            if branch_tree.get(&current.base).is_none() {
                 return false;
             }
-            current = branch_tree.get(&current.prev).unwrap().clone();
+            current = branch_tree.get(&current.base).unwrap().clone();
         }
     }
 }
@@ -148,19 +155,22 @@ impl LockTower {
     fn last_q(&self) -> &VoteLocks {
         self.vote_locks.last().unwrap()
     }
-    pub fn push_vote(&mut self, vote: Vote, branch_tree: &HashMap<usize, Branch>) {
+    pub fn push_vote(&mut self, vote: Vote, branch_tree: &HashMap<usize, Branch>) -> bool {
         self.rollback(vote.height);
         let num_old = self.last_q_mut().rollback(vote.height);
         if num_old > 0 && !self.last_q().is_empty() {
             let max_height = self.last_q().last_vote().unwrap().lock_height();
             self.vote_locks.push(VoteLocks::new(num_old, max_height));
         }
-        self.last_q().is_vote_valid(&vote, branch_tree);
+        if !self.last_q().is_vote_valid(&vote, branch_tree) {
+            return false ;
+        }
         self.last_q_mut().push_vote(vote);
         self.collapse();
         if self.last_q().is_full() {
             self.last_q_mut().pop_full();
         }
+        true
     }
 
     pub fn last_branch(&mut self) -> Branch {
@@ -209,7 +219,38 @@ mod test {
         for rounds in 0..100 {
             for i in 0..network.len() {
                 let height = rounds * len + i;
-                let branch = Branch { id: 0, prev: 0 };
+                let branch = Branch { id: 0, base: 0 };
+                let vote = Vote::new(branch, height);
+                for node in network.iter_mut() {
+                    assert!(node.push_vote(vote.clone(), &tree));
+                }
+            }
+        }
+        assert_eq!(converged(&network, &tree), len);
+    }
+    #[test]
+    fn test_all_partitions() {
+        let mut tree = HashMap::new();
+        let len = 100;
+        let mut network = create_network(len);
+        let warmup = 12;
+        for rounds in 0..warmup {
+            for (i, node) in network.iter_mut().enumerate() {
+                let height = rounds * len + i;
+                let branch = Branch { id: i + 1, base: 0 };
+                tree.insert(branch.id, branch.clone());
+                let vote = Vote::new(branch, height);
+                assert!(node.push_vote(vote.clone(), &tree));
+            }
+        }
+        for node in network.iter() {
+            assert_eq!(node.vote_locks.len(), warmup);
+        }
+        assert_eq!(converged(&network, &tree), 1);
+        for rounds in warmup..warmup + 10 {
+            for i in 0..network.len() {
+                let height = rounds * len + i;
+                let branch = network[i].last_q().last_vote().unwrap().branch.clone();
                 let vote = Vote::new(branch, height);
                 for node in network.iter_mut() {
                     node.push_vote(vote.clone(), &tree);
@@ -217,5 +258,6 @@ mod test {
                 println!("{} {}", height, converged(&network, &tree));
             }
         }
-    }
+        assert_eq!(converged(&network, &tree), 100);
+    } 
 }
