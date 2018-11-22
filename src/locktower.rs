@@ -1,14 +1,14 @@
 use std::collections::HashMap;
 use std::collections::VecDeque;
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub struct Branch {
     id: usize,
     base: usize,
 }
 
 impl Branch {
-    fn is_derived(&self, other: &Branch, branch_tree: &HashMap<usize, Branch>) -> bool {
+    fn is_trunk_of(&self, other: &Branch, branch_tree: &HashMap<usize, Branch>) -> bool {
         let mut current = other.clone();
         loop {
             // found it
@@ -19,7 +19,7 @@ impl Branch {
             if current.base == 0 && self.id == 0 {
                 assert!(branch_tree.get(&0).is_none());
                 return true;
-            } 
+            }
             // base is 0
             if branch_tree.get(&current.base).is_none() {
                 return false;
@@ -29,7 +29,7 @@ impl Branch {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub struct Vote {
     branch: Branch,
     height: usize,
@@ -47,23 +47,26 @@ impl Vote {
     pub fn lock_height(&self) -> usize {
         self.height + self.lockout
     }
-    pub fn is_derived(&self, other: &Vote, branch_tree: &HashMap<usize, Branch>) -> bool {
-        self.branch.is_derived(&other.branch, branch_tree)
+    pub fn is_trunk_of(&self, other: &Vote, branch_tree: &HashMap<usize, Branch>) -> bool {
+        self.branch.is_trunk_of(&other.branch, branch_tree)
     }
 }
 
-struct VoteLocks {
+#[derive(Debug)]
+pub struct VoteLocks {
     votes: VecDeque<Vote>,
     max_size: usize,
     max_height: usize,
+    trunk_branch: Branch,
 }
 
 impl VoteLocks {
-    fn new(max_size: usize, max_height: usize) -> Self {
+    pub fn new(max_size: usize, max_height: usize, trunk_branch: Branch) -> Self {
         VoteLocks {
             votes: VecDeque::new(),
             max_size,
             max_height,
+            trunk_branch,
         }
     }
     fn rollback(&mut self, height: usize) -> usize {
@@ -77,7 +80,7 @@ impl VoteLocks {
         }
         num_old
     }
-    fn push_vote(&mut self, vote: Vote) {
+    pub fn push_vote(&mut self, vote: Vote) {
         assert!(vote.height <= vote.height);
         assert!(!self.is_full());
         // double the previous lockouts
@@ -100,10 +103,21 @@ impl VoteLocks {
     fn last_vote(&self) -> Option<&Vote> {
         self.votes.front()
     }
-    fn is_vote_valid(&self, vote: &Vote, branch_tree: &HashMap<usize, Branch>) -> bool {
+    fn get_vote(&self, ix: usize) -> Option<&Vote> {
+        self.votes.get(ix)
+    }
+    pub fn first_vote(&self) -> Option<&Vote> {
+        self.votes.back()
+    }
+    fn last_branch(&self) -> Branch {
         self.last_vote()
-            .map(|v| v.is_derived(vote, branch_tree))
-            .unwrap_or(true)
+            .map(|v| v.branch.clone())
+            .unwrap_or(self.trunk_branch.clone())
+    }
+    pub fn is_vote_valid(&self, vote: &Vote, branch_tree: &HashMap<usize, Branch>) -> bool {
+        self.last_vote()
+            .map(|v| v.is_trunk_of(vote, branch_tree))
+            .unwrap_or(self.trunk_branch.is_trunk_of(&vote.branch, branch_tree))
     }
 }
 
@@ -117,7 +131,7 @@ pub const FINALITY_DEPTH: usize = 8;
 impl Default for LockTower {
     fn default() -> Self {
         let mut vote_locks = Vec::new();
-        vote_locks.push(VoteLocks::new(MAX_VOTES, 1 << MAX_VOTES));
+        vote_locks.push(VoteLocks::new(MAX_VOTES, 1 << MAX_VOTES, Branch::default()));
         Self { vote_locks }
     }
 }
@@ -155,15 +169,36 @@ impl LockTower {
     fn last_q(&self) -> &VoteLocks {
         self.vote_locks.last().unwrap()
     }
-    pub fn push_vote(&mut self, vote: Vote, branch_tree: &HashMap<usize, Branch>) -> bool {
+    // if the vote at depth is not common with more then 50% of the network then we should fail
+    // this vote until it is common, or enough votes get unrolled
+    pub fn is_converged(&self, converge_map: &HashMap<usize, usize>, depth: usize) -> bool {
+        self.last_q()
+            .get_vote(depth)
+            .map(|v| *converge_map.get(&v.branch.id).unwrap_or(&0) > 50)
+            .unwrap_or(true)
+    }
+    pub fn push_vote(
+        &mut self,
+        vote: Vote,
+        branch_tree: &HashMap<usize, Branch>,
+        converge_map: &HashMap<usize, usize>,
+        depth: usize,
+    ) -> bool {
         self.rollback(vote.height);
         let num_old = self.last_q_mut().rollback(vote.height);
         if num_old > 0 && !self.last_q().is_empty() {
-            let max_height = self.last_q().last_vote().unwrap().lock_height();
-            self.vote_locks.push(VoteLocks::new(num_old, max_height));
+            let last_vote = self.last_q().last_vote().unwrap().clone();
+            self.vote_locks.push(VoteLocks::new(
+                num_old,
+                last_vote.lock_height(),
+                last_vote.branch,
+            ));
         }
         if !self.last_q().is_vote_valid(&vote, branch_tree) {
-            return false ;
+            return false;
+        }
+        if !self.is_converged(converge_map, depth) {
+            return false;
         }
         self.last_q_mut().push_vote(vote);
         self.collapse();
@@ -173,43 +208,69 @@ impl LockTower {
         true
     }
 
-    pub fn last_branch(&mut self) -> Branch {
-        self.last_q()
-            .last_vote()
-            .map(|v| v.branch.clone())
-            .unwrap_or_default()
+    pub fn last_branch(&self) -> Branch {
+        self.last_q().last_branch()
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::cmp;
 
+    #[test]
+    fn test_is_trunk_of_1() {
+        let tree = HashMap::new();
+        let b1 = Branch { id: 1, base: 0 };
+        let b2 = Branch { id: 2, base: 0 };
+        assert!(!b1.is_trunk_of(&b2, &tree));
+    }
+    #[test]
+    fn test_is_trunk_of_2() {
+        let tree = HashMap::new();
+        let b1 = Branch { id: 1, base: 0 };
+        let b2 = Branch { id: 0, base: 0 };
+        assert!(!b1.is_trunk_of(&b2, &tree));
+    }
+    #[test]
+    fn test_is_trunk_of_3() {
+        let tree = HashMap::new();
+        let b1 = Branch { id: 1, base: 0 };
+        let b2 = Branch { id: 1, base: 0 };
+        assert!(b1.is_trunk_of(&b2, &tree));
+    }
+    #[test]
+    fn test_is_trunk_of_4() {
+        let mut tree = HashMap::new();
+        let b1 = Branch { id: 1, base: 0 };
+        let b2 = Branch { id: 2, base: 1 };
+        tree.insert(b1.id, b1.clone());
+        assert!(b1.is_trunk_of(&b2, &tree));
+        assert!(!b2.is_trunk_of(&b1, &tree));
+    }
     fn create_network(sz: usize) -> Vec<LockTower> {
         (0..sz).into_iter().map(|_| LockTower::default()).collect()
     }
-    /// find the max number of nodes that are on the same branch
-    fn converged(network: &Vec<LockTower>, branch_tree: &HashMap<usize, Branch>) -> usize {
-        let mut max_derived = 0;
-        let mut branches: HashMap<usize, bool> = HashMap::new();
-        for n in network {
-            if n.last_q().last_vote().is_none() {
+    fn calc_converge_map(
+        network: &Vec<LockTower>,
+        branch_tree: &HashMap<usize, Branch>,
+    ) -> HashMap<usize, usize> {
+        let mut cmap: HashMap<usize, usize> = HashMap::new();
+        for node in network {
+            if cmap.get(&node.last_branch().id).is_some() {
                 continue;
             }
-            let branch = &n.last_q().last_vote().unwrap().branch;
-            if branches.get(&branch.id).is_some() {
-                continue;
-            }
-            let derived = network
+            let common = network
                 .iter()
-                .filter(|x| !x.last_q().last_vote().is_none())
-                .filter(|y| branch.is_derived(&y.last_q().last_vote().unwrap().branch, branch_tree))
-                .count();
-            branches.insert(branch.id, true);
-            max_derived = cmp::max(max_derived, derived);
+                .filter(|y| {
+                    node.last_branch()
+                        .is_trunk_of(&y.last_branch(), branch_tree)
+                }).count();
+            cmap.insert(node.last_branch().id, common);
         }
-        max_derived
+        cmap
+    }
+    fn calc_converged(cmap: &HashMap<usize, usize>) -> usize {
+        *cmap.values().max().unwrap_or(&0)
     }
     #[test]
     fn test_no_partitions() {
@@ -221,43 +282,64 @@ mod test {
                 let height = rounds * len + i;
                 let branch = Branch { id: 0, base: 0 };
                 let vote = Vote::new(branch, height);
+                let cmap = calc_converge_map(&network, &tree);
                 for node in network.iter_mut() {
-                    assert!(node.push_vote(vote.clone(), &tree));
+                    assert!(node.push_vote(vote.clone(), &tree, &cmap, 0));
                 }
             }
         }
-        assert_eq!(converged(&network, &tree), len);
+        let cmap = calc_converge_map(&network, &tree);
+        assert_eq!(calc_converged(&cmap), len);
     }
     #[test]
     fn test_all_partitions() {
         let mut tree = HashMap::new();
         let len = 100;
         let mut network = create_network(len);
-        let warmup = 12;
-        for rounds in 0..warmup {
-            for (i, node) in network.iter_mut().enumerate() {
-                let height = rounds * len + i;
-                let branch = Branch { id: i + 1, base: 0 };
-                tree.insert(branch.id, branch.clone());
+        let warmup = 6;
+        for height in 0..warmup {
+            let cmap = calc_converge_map(&network, &tree);
+            for (j, node) in network.iter_mut().enumerate() {
+                let mut branch = node.last_branch().clone();
+                if branch.id == 0 {
+                    branch.id = j + 1;
+                    tree.insert(branch.id, branch.clone());
+                }
                 let vote = Vote::new(branch, height);
-                assert!(node.push_vote(vote.clone(), &tree));
+                assert!(node.last_q().is_vote_valid(&vote, &tree));
+                assert!(node.push_vote(vote.clone(), &tree, &cmap, warmup));
             }
         }
         for node in network.iter() {
-            assert_eq!(node.vote_locks.len(), warmup);
+            assert_eq!(node.last_q().votes.len(), warmup);
+            assert_eq!(node.last_q().first_vote().unwrap().lockout, 1 << warmup);
+            assert!(node.last_q().max_height > 1 << warmup);
+            assert!(node.last_q().first_vote().unwrap().lock_height() >= 1 << warmup);
+            let common = network
+                .iter()
+                .filter(|n| node.last_branch().is_trunk_of(&n.last_branch(), &tree))
+                .count();
+            assert_eq!(common, 1);
         }
-        assert_eq!(converged(&network, &tree), 1);
-        for rounds in warmup..warmup + 10 {
+        let cmap = calc_converge_map(&network, &tree);
+        assert_eq!(calc_converged(&cmap), 1);
+        for rounds in 0..40 {
             for i in 0..network.len() {
-                let height = rounds * len + i;
-                let branch = network[i].last_q().last_vote().unwrap().branch.clone();
+                let height = warmup + rounds * len + i;
+                let branch = network[i].last_branch().clone();
+                let cmap = calc_converge_map(&network, &tree);
                 let vote = Vote::new(branch, height);
-                for node in network.iter_mut() {
-                    node.push_vote(vote.clone(), &tree);
+                for (j, node) in network.iter_mut().enumerate() {
+                    node.push_vote(vote.clone(), &tree, &cmap, warmup);
+                    assert!(
+                        node.last_branch().id != 0,
+                        format!("{:?} {} {}", node.last_q(), i, j)
+                    );
                 }
-                println!("{} {}", height, converged(&network, &tree));
+                let cmap = calc_converge_map(&network, &tree);
+                println!("{} {}", height, calc_converged(&cmap));
             }
         }
-        assert_eq!(converged(&network, &tree), 100);
-    } 
+        assert_eq!(calc_converged(&cmap), 100);
+    }
 }
