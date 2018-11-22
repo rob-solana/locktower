@@ -90,6 +90,13 @@ impl VoteLocks {
         // push the new vote to the font
         self.votes.push_front(vote);
     }
+    fn append(&mut self, mut other: Self, branch_tree: &HashMap<usize, Branch>) {
+        for _ in 0..other.votes.len() {
+            let v = other.votes.pop_back().unwrap();
+            assert!(self.last_branch().is_trunk_of(&v.branch, branch_tree));
+            self.votes.push_front(v);
+        }
+    }
     fn pop_full(&mut self) {
         assert!(self.is_full());
         let _ = self.votes.pop_back();
@@ -149,7 +156,7 @@ impl LockTower {
         }
         assert!(!self.vote_locks.is_empty());
     }
-    fn collapse(&mut self) {
+    fn collapse(&mut self, branch_tree: &HashMap<usize, Branch>) {
         loop {
             if self.vote_locks.len() == 1 {
                 break;
@@ -158,9 +165,7 @@ impl LockTower {
                 break;
             }
             let full = self.vote_locks.pop().unwrap();
-            for v in full.votes.into_iter() {
-                self.last_q_mut().push_vote(v);
-            }
+            self.last_q_mut().append(full, branch_tree);
         }
     }
     fn last_q_mut(&mut self) -> &mut VoteLocks {
@@ -201,7 +206,7 @@ impl LockTower {
             return false;
         }
         self.last_q_mut().push_vote(vote);
-        self.collapse();
+        self.collapse(branch_tree);
         if self.last_q().is_full() {
             self.last_q_mut().pop_full();
         }
@@ -216,6 +221,7 @@ impl LockTower {
 #[cfg(test)]
 mod test {
     use super::*;
+    use rand::{thread_rng, Rng};
 
     #[test]
     fn test_is_trunk_of_1() {
@@ -270,7 +276,7 @@ mod test {
         cmap
     }
     fn calc_converged(cmap: &HashMap<usize, usize>) -> usize {
-        *cmap.values().max().unwrap_or(&0)
+        *cmap.values().min().unwrap_or(&0)
     }
     #[test]
     fn test_no_partitions() {
@@ -296,7 +302,8 @@ mod test {
         let mut tree = HashMap::new();
         let len = 100;
         let mut network = create_network(len);
-        let warmup = 6;
+        let fail_rate = 0.4;
+        let warmup = 7;
         for height in 0..warmup {
             let cmap = calc_converge_map(&network, &tree);
             for (j, node) in network.iter_mut().enumerate() {
@@ -324,22 +331,26 @@ mod test {
         let cmap = calc_converge_map(&network, &tree);
         assert_eq!(calc_converged(&cmap), 1);
         for rounds in 0..40 {
-            for i in 0..network.len() {
+            for i in 0..len {
                 let height = warmup + rounds * len + i;
                 let branch = network[i].last_branch().clone();
                 let cmap = calc_converge_map(&network, &tree);
                 let vote = Vote::new(branch, height);
-                for (j, node) in network.iter_mut().enumerate() {
+                for node in network.iter_mut() {
+                    if thread_rng().gen_range(0f64, 1.0f64) < fail_rate {
+                        continue;
+                    }
                     node.push_vote(vote.clone(), &tree, &cmap, warmup);
-                    assert!(
-                        node.last_branch().id != 0,
-                        format!("{:?} {} {}", node.last_q(), i, j)
-                    );
                 }
                 let cmap = calc_converge_map(&network, &tree);
                 println!("{} {}", height, calc_converged(&cmap));
             }
+            let cmap = calc_converge_map(&network, &tree);
+            if calc_converged(&cmap) == len {
+                break;
+            }
         }
-        assert_eq!(calc_converged(&cmap), 100);
+        let cmap = calc_converge_map(&network, &tree);
+        assert_eq!(calc_converged(&cmap), len);
     }
 }
