@@ -126,10 +126,13 @@ impl LockTower {
         for _ in 0..num_old {
             self.vote_locks.pop();
         }
-        assert!(self.vote_locks.is_empty());
+        assert!(!self.vote_locks.is_empty());
     }
     fn collapse(&mut self) {
         loop {
+            if self.vote_locks.len() == 1 {
+                break;
+            }
             if !self.last_q().is_full() {
                 break;
             }
@@ -142,7 +145,7 @@ impl LockTower {
     fn last_q_mut(&mut self) -> &mut VoteLocks {
         self.vote_locks.last_mut().unwrap()
     }
-    fn last_q(&mut self) -> &VoteLocks {
+    fn last_q(&self) -> &VoteLocks {
         self.vote_locks.last().unwrap()
     }
     pub fn push_vote(&mut self, vote: Vote, branch_tree: &HashMap<usize, Branch>) {
@@ -175,12 +178,12 @@ mod test {
     fn create_network(sz: usize) -> Vec<LockTower> {
         (0..sz).into_iter().map(|_| LockTower::default()).collect()
     }
-    fn print_depth(network: &Vec<LockTower>) -> String {
-        let strs: Vec<String> = network
+    fn converged(network: &Vec<LockTower>) -> usize {
+        network
             .iter()
-            .map(|x| format!("{}", x.vote_locks.len()))
-            .collect();
-        strs.join(" ")
+            .filter(|x| x.vote_locks.len() == 1)
+            .filter(|x| x.last_q().last_vote().is_none() || x.last_q().last_vote().unwrap().branch.id == 0)
+            .count()
     }
     #[test]
     fn test_no_partitions() {
@@ -195,7 +198,7 @@ mod test {
                 for node in network.iter_mut() {
                     node.push_vote(vote.clone(), &tree);
                 }
-                println!("{} {}", height, print_depth(&network));
+                println!("{} {}", height, converged(&network));
             }
         }
     }
