@@ -89,8 +89,12 @@ impl LockTower {
     }
     fn is_converged(&self, converge_map: &HashMap<usize, usize>, depth: usize) -> bool {
         self.get_vote(depth)
-            .map(|v| *converge_map.get(&v.branch.id).unwrap_or(&0) > 50)
-            .unwrap_or(true)
+            .map(|v| {
+                let v = *converge_map.get(&v.branch.id).unwrap_or(&0);
+                // hard coded to 100 nodes
+                assert!(v <= 100);
+                v > 50
+            }).unwrap_or(true)
     }
 
     fn rollback(&mut self, time: usize) {
@@ -116,17 +120,18 @@ impl LockTower {
         true
     }
     fn enter_vote(&mut self, vote: Vote) {
+        let vote_time = vote.time;
         assert!(!self.is_full());
-        // double the previous lockouts
-        for (i, v) in self.votes.iter_mut().enumerate() {
-            assert!(v.time <= vote.time);
-            if (v.lockout + 1) < 1 << (i + 2) {
-                v.lockout *= 2;
-            }
-        }
         assert_eq!(vote.lockout, 2);
         // push the new vote to the font
         self.votes.push_front(vote);
+        // double the lockouts if the threshold to doulbe is met
+        for i in 1..self.votes.len() {
+            assert!(self.votes[i].time <= vote_time);
+            if self.votes[i].lockout == self.votes[i - 1].lockout {
+                self.votes[i].lockout *= 2;
+            }
+        }
     }
     fn pop_full(&mut self) {
         assert!(self.is_full());
@@ -193,23 +198,23 @@ mod test {
     #[test]
     fn test_push_vote() {
         let tree = HashMap::new();
-        let cmap = HashMap::new();
+        let bmap = HashMap::new();
         let b0 = Branch { id: 0, base: 0 };
         let mut node = LockTower::new(32);
         let vote = Vote::new(b0.clone(), 0);
-        assert!(node.push_vote(vote, &tree, &cmap, 32));
+        assert!(node.push_vote(vote, &tree, &bmap, 32));
         assert_eq!(node.votes.len(), 1);
 
         let vote = Vote::new(b0.clone(), 1);
-        assert!(node.push_vote(vote, &tree, &cmap, 32));
+        assert!(node.push_vote(vote, &tree, &bmap, 32));
         assert_eq!(node.votes.len(), 2);
 
         let vote = Vote::new(b0.clone(), 2);
-        assert!(node.push_vote(vote, &tree, &cmap, 32));
+        assert!(node.push_vote(vote, &tree, &bmap, 32));
         assert_eq!(node.votes.len(), 3);
 
         let vote = Vote::new(b0.clone(), 3);
-        assert!(node.push_vote(vote, &tree, &cmap, 32));
+        assert!(node.push_vote(vote, &tree, &bmap, 32));
         assert_eq!(node.votes.len(), 4);
 
         assert_eq!(node.votes[0].lockout, 2);
@@ -221,16 +226,16 @@ mod test {
         assert_eq!(node.votes[2].lock_height(), 9);
 
         let vote = Vote::new(b0.clone(), 7);
-        assert!(node.push_vote(vote, &tree, &cmap, 32));
+        assert!(node.push_vote(vote, &tree, &bmap, 32));
 
         assert_eq!(node.votes[0].lockout, 2);
 
         let b1 = Branch { id: 1, base: 1 };
         let vote = Vote::new(b1.clone(), 8);
-        assert!(!node.push_vote(vote, &tree, &cmap, 32));
+        assert!(!node.push_vote(vote, &tree, &bmap, 32));
 
         let vote = Vote::new(b0.clone(), 8);
-        assert!(node.push_vote(vote, &tree, &cmap, 32));
+        assert!(node.push_vote(vote, &tree, &bmap, 32));
 
         assert_eq!(node.votes.len(), 4);
         assert_eq!(node.votes[0].lockout, 2);
@@ -239,31 +244,14 @@ mod test {
         assert_eq!(node.votes[3].lockout, 16);
 
         let vote = Vote::new(b0.clone(), 10);
-        assert!(node.push_vote(vote, &tree, &cmap, 32));
+        assert!(node.push_vote(vote, &tree, &bmap, 32));
         assert_eq!(node.votes.len(), 2);
+        assert_eq!(node.votes[0].lockout, 2);
+        assert_eq!(node.votes[1].lockout, 16);
     }
 
     fn create_network(sz: usize) -> Vec<LockTower> {
         (0..sz).into_iter().map(|_| LockTower::new(32)).collect()
-    }
-    fn calc_converge_map(
-        network: &Vec<LockTower>,
-        branch_tree: &HashMap<usize, Branch>,
-    ) -> HashMap<usize, usize> {
-        let mut cmap: HashMap<usize, usize> = HashMap::new();
-        for node in network {
-            if cmap.get(&node.last_branch().id).is_some() {
-                continue;
-            }
-            let common = network
-                .iter()
-                .filter(|y| {
-                    node.last_branch()
-                        .is_trunk_of(&y.last_branch(), branch_tree)
-                }).count();
-            cmap.insert(node.last_branch().id, common);
-        }
-        cmap
     }
     fn calc_branch_depth(branch_tree: &HashMap<usize, Branch>, id: usize) -> usize {
         let mut depth = 0;
@@ -277,8 +265,10 @@ mod test {
         }
         depth
     }
-
-    fn calc_lca(network: &Vec<LockTower>, branch_tree: &HashMap<usize, Branch>) -> (usize, usize) {
+    fn calc_branch_map(
+        network: &Vec<LockTower>,
+        branch_tree: &HashMap<usize, Branch>,
+    ) -> HashMap<usize, usize> {
         let mut lca_map: HashMap<usize, usize> = HashMap::new();
         for node in network {
             let mut start = node.last_branch();
@@ -290,20 +280,19 @@ mod test {
                 start = branch_tree.get(&start.base).unwrap().clone();
             }
         }
-        let mut data: Vec<_> = lca_map.iter().collect();
-        data.sort_by_key(|x| (x.1, x.0));
-        let mut rv = data.last().map(|v| (*v.0, *v.1)).unwrap();
-        for v in &data {
-            if *v.1 == network.len() && *v.0 > rv.0 {
-                rv = (*v.0, *v.1)
-            }
-        }
-        rv
+        lca_map
     }
-    fn calc_converged(cmap: &HashMap<usize, usize>) -> usize {
-        let len: usize = cmap.values().len();
-        let sum: usize = cmap.values().sum();
-        sum / len
+    fn calc_newest_trunk(bmap: &HashMap<usize, usize>) -> (usize, usize) {
+        let mut data: Vec<_> = bmap.iter().collect();
+        data.sort_by_key(|x| (x.1, x.0));
+        data.last().map(|v| (*v.0, *v.1)).unwrap()
+    }
+    fn calc_tip_converged(network: &Vec<LockTower>, bmap: &HashMap<usize, usize>) -> usize {
+        let sum: usize = network
+            .iter()
+            .map(|n| *bmap.get(&n.last_branch().id).unwrap_or(&0))
+            .sum();
+        sum / network.len()
     }
     #[test]
     fn test_no_partitions() {
@@ -320,24 +309,23 @@ mod test {
                 };
                 tree.insert(branch.id, branch.clone());
                 let vote = Vote::new(branch, time);
-                let cmap = calc_converge_map(&network, &tree);
+                let bmap = calc_branch_map(&network, &tree);
                 for node in network.iter_mut() {
-                    assert!(node.push_vote(vote.clone(), &tree, &cmap, 0));
+                    assert!(node.push_vote(vote.clone(), &tree, &bmap, 0));
                 }
-                println!("{} {}", time, calc_converged(&cmap));
+                println!("{} {}", time, calc_tip_converged(&network, &bmap));
             }
         }
-        let cmap = calc_converge_map(&network, &tree);
-        assert_eq!(calc_converged(&cmap), len);
+        let bmap = calc_branch_map(&network, &tree);
+        assert_eq!(calc_tip_converged(&network, &bmap), len);
     }
-    fn test_with_partitions(num_partitions: usize) {
+    fn test_with_partitions(num_partitions: usize, fail_rate: f64) {
         let mut tree = HashMap::new();
         let len = 100;
         let mut network = create_network(len);
-        let fail_rate = 0.1;
         let warmup = 8;
         for time in 0..warmup {
-            let cmap = calc_converge_map(&network, &tree);
+            let bmap = calc_branch_map(&network, &tree);
             for node in network.iter_mut() {
                 let mut branch = node.last_branch().clone();
                 if branch.id == 0 {
@@ -346,7 +334,7 @@ mod test {
                 }
                 let vote = Vote::new(branch, time);
                 assert!(node.is_valid(&vote, &tree));
-                assert!(node.push_vote(vote.clone(), &tree, &cmap, warmup));
+                assert!(node.push_vote(vote.clone(), &tree, &bmap, warmup));
             }
         }
         for node in network.iter() {
@@ -354,8 +342,8 @@ mod test {
             assert_eq!(node.first_vote().unwrap().lockout, 1 << warmup);
             assert!(node.first_vote().unwrap().lock_height() >= 1 << warmup);
         }
-        let cmap = calc_converge_map(&network, &tree);
-        assert_ne!(calc_converged(&cmap), len);
+        let bmap = calc_branch_map(&network, &tree);
+        assert_ne!(calc_tip_converged(&network, &bmap), len);
         for rounds in 0..40 {
             for i in 0..len {
                 let time = warmup + rounds * len + i;
@@ -365,49 +353,56 @@ mod test {
                     base: base.id,
                 };
                 tree.insert(branch.id, branch.clone());
-                let cmap = calc_converge_map(&network, &tree);
+                let bmap = calc_branch_map(&network, &tree);
                 let vote = Vote::new(branch, time);
                 for node in network.iter_mut() {
                     if thread_rng().gen_range(0f64, 1.0f64) < fail_rate {
                         continue;
                     }
-                    node.push_vote(vote.clone(), &tree, &cmap, warmup);
+                    node.push_vote(vote.clone(), &tree, &bmap, warmup);
                 }
-                let cmap = calc_converge_map(&network, &tree);
-                let lca = calc_lca(&network, &tree);
+                let bmap = calc_branch_map(&network, &tree);
+                let trunk = calc_newest_trunk(&bmap);
+                let trunk_time = if trunk.0 > num_partitions {
+                    trunk.0 - num_partitions
+                } else {
+                    trunk.0
+                };
                 println!(
-                    "{} {} {:?} {}",
+                    "time: {}, tip converged: {}, trunk id: {}, trunk time: {}, trunk converged {}, trunk depth {}",
                     time,
-                    calc_converged(&cmap),
-                    lca,
-                    calc_branch_depth(&tree, lca.0)
+                    calc_tip_converged(&network, &bmap),
+                    trunk.0,
+                    trunk_time,
+                    trunk.1,
+                    calc_branch_depth(&tree, trunk.0)
                 );
-                if calc_converged(&cmap) == len {
+                if calc_tip_converged(&network, &bmap) == len {
                     break;
                 }
             }
-            let cmap = calc_converge_map(&network, &tree);
-            if calc_converged(&cmap) == len {
+            let bmap = calc_branch_map(&network, &tree);
+            if calc_tip_converged(&network, &bmap) == len {
                 break;
             }
         }
-        let cmap = calc_converge_map(&network, &tree);
-        assert_eq!(calc_converged(&cmap), len);
+        let bmap = calc_branch_map(&network, &tree);
+        assert_eq!(calc_tip_converged(&network, &bmap), len);
     }
     #[test]
     fn test_all_partitions() {
-        test_with_partitions(100)
+        test_with_partitions(100, 0.1)
     }
     #[test]
     fn test_2_partitions() {
-        test_with_partitions(2)
+        test_with_partitions(2, 0.0)
     }
     #[test]
     fn test_3_partitions() {
-        test_with_partitions(3)
+        test_with_partitions(3, 0.0)
     }
     #[test]
     fn test_4_partitions() {
-        test_with_partitions(4)
+        test_with_partitions(4, 0.0)
     }
 }
