@@ -102,6 +102,7 @@ impl VoteLocks {
         let _ = self.votes.pop_back();
     }
     fn is_full(&self) -> bool {
+        assert!(self.votes.len() <= self.max_size);
         self.votes.len() == self.max_size
     }
     fn is_empty(&self) -> bool {
@@ -165,6 +166,7 @@ impl LockTower {
                 break;
             }
             let full = self.vote_locks.pop().unwrap();
+            println!("collapse of q {}", full.votes.len());
             self.last_q_mut().append(full, branch_tree);
         }
     }
@@ -192,6 +194,7 @@ impl LockTower {
         self.rollback(vote.height);
         let num_old = self.last_q_mut().rollback(vote.height);
         if num_old > 0 && !self.last_q().is_empty() {
+            println!("rollback votes: {}", num_old);
             let last_vote = self.last_q().last_vote().unwrap().clone();
             self.vote_locks.push(VoteLocks::new(
                 num_old,
@@ -208,6 +211,7 @@ impl LockTower {
         self.last_q_mut().push_vote(vote);
         self.collapse(branch_tree);
         if self.last_q().is_full() {
+            assert_eq!(self.vote_locks.len(), 1);
             self.last_q_mut().pop_full();
         }
         true
@@ -253,6 +257,58 @@ mod test {
         assert!(b1.is_trunk_of(&b2, &tree));
         assert!(!b2.is_trunk_of(&b1, &tree));
     }
+    #[test]
+    fn test_push_vote() {
+        let mut tree = HashMap::new();
+        let cmap = HashMap::new();
+        let b0 = Branch { id: 0, base: 0 };
+        let mut node = LockTower::default();
+        let vote = Vote::new(b0.clone(), 0);
+        assert!(node.push_vote(vote, &tree, &cmap, 32));
+
+        let vote = Vote::new(b0.clone(), 1);
+        assert!(node.push_vote(vote, &tree, &cmap, 32));
+
+        let vote = Vote::new(b0.clone(), 2);
+        assert!(node.push_vote(vote, &tree, &cmap, 32));
+
+        let vote = Vote::new(b0.clone(), 3);
+        assert!(node.push_vote(vote, &tree, &cmap, 32));
+
+        assert_eq!(node.last_q().votes.len(), 4);
+        assert_eq!(node.last_q().votes[0].lockout, 2);
+        assert_eq!(node.last_q().votes[1].lockout, 4);
+        assert_eq!(node.last_q().votes[2].lockout, 8);
+        assert_eq!(node.last_q().votes[3].lockout, 16);
+
+        assert_eq!(node.last_q().votes[1].lock_height(), 6);
+        assert_eq!(node.last_q().votes[2].lock_height(), 9);
+
+        let vote = Vote::new(b0.clone(), 7);
+        assert!(node.push_vote(vote, &tree, &cmap, 32));
+
+        assert_eq!(node.vote_locks.len(), 2);
+        assert_eq!(node.last_q().votes[0].lockout, 2);
+
+        let b1 = Branch { id: 1, base: 1 };
+        let vote = Vote::new(b1.clone(), 8);
+        assert!(!node.push_vote(vote, &tree, &cmap, 32));
+        assert_eq!(node.vote_locks.len(), 2);
+
+        let vote = Vote::new(b0.clone(), 8);
+        assert!(node.push_vote(vote, &tree, &cmap, 32));
+
+        assert_eq!(node.vote_locks.len(), 1);
+        assert_eq!(node.last_q().votes[0].lockout, 2);
+        assert_eq!(node.last_q().votes[1].lockout, 4);
+        assert_eq!(node.last_q().votes[2].lockout, 8);
+        assert_eq!(node.last_q().votes[3].lockout, 16);
+
+        let vote = Vote::new(b0.clone(), 10);
+        assert!(node.push_vote(vote, &tree, &cmap, 32));
+        assert_eq!(node.vote_locks.len(), 2);
+    }
+
     fn create_network(sz: usize) -> Vec<LockTower> {
         (0..sz).into_iter().map(|_| LockTower::default()).collect()
     }
@@ -334,6 +390,7 @@ mod test {
                     if thread_rng().gen_range(0f64, 1.0f64) < fail_rate {
                         continue;
                     }
+                    println!("{:?}", node.last_q());
                     node.push_vote(vote.clone(), &tree, &cmap, warmup);
                 }
                 let cmap = calc_converge_map(&network, &tree);
