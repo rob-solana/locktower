@@ -2,9 +2,9 @@
 
 Lock Tower is an implementation of Nakomoto Consensus with time based locks. It satisfies the following properties:
 
-* If the nodes share a common ancestor then they will converge to a branch containing that ancestor no matter how they are partitioned.
+* If the nodes share a common ancestor than they will converge to a branch containing that ancestor no matter how they are partitioned.
 
-* Rollback requires exponentially more time for older votes then for newer votes.
+* Rollback requires exponentially more time for older votes than for newer votes.
 
 * Nodes can independently configure a vote threshold they would like to see before committing a vote to a higher lockout.  This allows each node to make a trade-off of risk and reward.
 
@@ -19,7 +19,7 @@ The basic idea to this approach is to stack consensus votes.  Each consensus vot
 
 ### Rollback
 
-Before a vote is pushed to the stack, all the votes leading up to vote with a lower lock time then the new vote are purged.  After rollback lockouts are not doubled until the node catches up to the rollback height of votes.
+Before a vote is pushed to the stack, all the votes leading up to vote with a lower lock time than the new vote are purged.  After rollback lockouts are not doubled until the node catches up to the rollback height of votes.
 
 For example, a vote stack with the following state:
 ```
