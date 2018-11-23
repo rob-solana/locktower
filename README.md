@@ -1,12 +1,12 @@
 # LockTower
 
-Lock Tower is a an implementation of Nakomoto Consensus with time based locks. It satisfies the following properties:
+Lock Tower is an implementation of Nakomoto Consensus with time based locks. It satisfies the following properties:
 
-* if the nodes share a common ancenstor then they will converge to a branch containing that ancenstor no matter how they are partitioned.
+* if the nodes share a common ancestor then they will converge to a branch containing that ancestor no matter how they are partitioned.
 
 * rollback requires exponentially more time for older votes then for newer votes.
 
-* Nodes can independetly configure how much convergance in voting they would like to see before commiting a vote to a higher lockout.  This allows each node to make a tradeoff of risk and reward.
+* Nodes can independently configure how much convergence in voting they would like to see before committing a vote to a higher lockout.  This allows each node to make a trade-off of risk and reward.
 
 ## Time
 
