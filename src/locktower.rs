@@ -319,6 +319,8 @@ mod test {
         let bmap = calc_branch_map(&network, &tree);
         assert_eq!(calc_tip_converged(&network, &bmap), len);
     }
+    /// * num_partitions - 1 to 100 partitions
+    /// * fail_rate - 0 to 1.0 rate of packet receive failure
     fn test_with_partitions(num_partitions: usize, fail_rate: f64) {
         let mut tree = HashMap::new();
         let len = 100;
@@ -387,11 +389,12 @@ mod test {
             }
         }
         let bmap = calc_branch_map(&network, &tree);
-        assert_eq!(calc_tip_converged(&network, &bmap), len);
+        let trunk = calc_newest_trunk(&bmap);
+        assert_eq!(trunk.1, len);
     }
     #[test]
     fn test_all_partitions() {
-        test_with_partitions(100, 0.1)
+        test_with_partitions(100, 0.2)
     }
     #[test]
     fn test_2_partitions() {
@@ -399,7 +402,7 @@ mod test {
     }
     #[test]
     fn test_3_partitions() {
-        test_with_partitions(3, 0.0)
+        test_with_partitions(3, 0.9)
     }
     #[test]
     fn test_4_partitions() {
