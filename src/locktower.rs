@@ -265,6 +265,19 @@ mod test {
         }
         cmap
     }
+    fn calc_branch_depth(branch_tree: &HashMap<usize, Branch>, id: usize) -> usize {
+        let mut depth = 0;
+        let mut start = branch_tree.get(&id);
+        loop {
+            if start.is_none() {
+                break;
+            }
+            depth += 1;
+            start = branch_tree.get(&start.unwrap().base);
+        }
+        depth
+    }
+
     fn calc_lca(network: &Vec<LockTower>, branch_tree: &HashMap<usize, Branch>) -> (usize, usize) {
         let mut lca_map: HashMap<usize, usize> = HashMap::new();
         for node in network {
@@ -321,7 +334,7 @@ mod test {
         let mut tree = HashMap::new();
         let len = 100;
         let mut network = create_network(len);
-        let fail_rate = 0.001;
+        let fail_rate = 0.1;
         let warmup = 8;
         for time in 0..warmup {
             let cmap = calc_converge_map(&network, &tree);
@@ -361,11 +374,13 @@ mod test {
                     node.push_vote(vote.clone(), &tree, &cmap, warmup);
                 }
                 let cmap = calc_converge_map(&network, &tree);
+                let lca = calc_lca(&network, &tree);
                 println!(
-                    "{} {} {:?}",
+                    "{} {} {} {} {}",
                     time,
                     calc_converged(&cmap),
-                    calc_lca(&network, &tree)
+                    lca,
+                    calc_branch_depth(&tree, lca.0)
                 );
                 if calc_converged(&cmap) == len {
                     break;
