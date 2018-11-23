@@ -278,14 +278,14 @@ mod test {
             }
         }
         let mut data: Vec<_> = lca_map.iter().collect();
-        data.sort_by_key(|x| x.1);
+        data.sort_by_key(|x| (x.1, x.0));
+        let mut rv = data.last().map(|v| (*v.0, *v.1)).unwrap();
         for v in &data {
-            if *v.1 == network.len() {
-                return (*v.0, *v.1);
+            if *v.1 == network.len() && *v.0 > rv.0 {
+                rv = (*v.0, *v.1)
             }
         }
-        let v = data.last().unwrap();
-        (*v.0, *v.1)
+        rv
     }
     fn calc_converged(cmap: &HashMap<usize, usize>) -> usize {
         let len: usize = cmap.values().len();
@@ -348,7 +348,7 @@ mod test {
                 let time = warmup + rounds * len + i;
                 let base = network[i].last_branch().clone();
                 let branch = Branch {
-                    id: time + 1,
+                    id: time + num_partitions,
                     base: base.id,
                 };
                 tree.insert(branch.id, branch.clone());
