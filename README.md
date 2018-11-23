@@ -19,24 +19,40 @@ The basic idea to this approach is to stack consensus votes.  Each consensus vot
 
 ### Rollback
 
-Before a vote is pushed to the stack, all the votes leading up to vote with a lower lockout time then the new vote are purged.
+Before a vote is pushed to the stack, all the votes leading up to vote with a lower lock time then the new vote are purged.
 
 After rollback lockouts are not doubled until the node catches up to the rollback height of votes.
 
 For example, a vote stack with the following state:
 ```
-vote height | lockout |
------------------------
-          4 |      2  |
-          3 |      4  | 
-          2 |      8  | 
-          1 |      16 |
+vote time | lockout | lock time
+-------------------------------
+        4 |      2  |         6
+        3 |      4  |         7
+        2 |      8  |        10
+        1 |      16 |        l7
 ```
-If the next vote is at height 9 the resulting state will be
+If the next vote is at time 9 the resulting state will be
 ```
-vote height | lockout |
------------------------
-          9 |      2  |
-          2 |      8  | 
-          1 |      16 |
-``` 
+vote time | lockout | lock time
+-------------------------------
+        9 |      2  |        11
+        2 |      8  |        10
+        1 |      16 |        l7
+```                              
+Next vote is at time 10
+```
+vote time | lockout | lock time
+-------------------------------
+       10 |      2  |        12
+        9 |      4  |        13
+        2 |      8  |        10
+        1 |      16 |        l7
+```                               
+At this point the new votes caught up to the previous votes.  But, the vote at time 2 expires at 10, so when the next vote is applied the entire stack will unroll.
+```
+vote time | lockout | lock time
+-------------------------------
+       11 |      2  |        13
+        1 |      16 |        l7
+```                                
