@@ -2,9 +2,9 @@
 
 Lock Tower is an implementation of Nakomoto Consensus with time based locks. It satisfies the following properties:
 
-* if the nodes share a common ancestor then they will converge to a branch containing that ancestor no matter how they are partitioned.
+* If the nodes share a common ancestor then they will converge to a branch containing that ancestor no matter how they are partitioned.
 
-* rollback requires exponentially more time for older votes then for newer votes.
+* Rollback requires exponentially more time for older votes then for newer votes.
 
 * Nodes can independently configure a vote threshold they would like to see before committing a vote to a higher lockout.  This allows each node to make a trade-off of risk and reward.
 
@@ -14,7 +14,7 @@ For networks like Solana time can be the PoH hash count which is a VDF that prov
 
 ## Algorithm
 
-The basic idea to this approach is to stack consensus votes.  Each consensus vote has a "lockout" before it can be switched.  When a vote is added to the stack the lockouts of all the votes in the stack are doubled.  With each new vote a node commits the previous votes to a ever increasing lockout.  Since at 32 votes we can consider the system to be at `max lockout` any votes with a lockout above 1<<32 are dequeued.
+The basic idea to this approach is to stack consensus votes.  Each consensus vote has a `lockout` before it can be switched.  When a vote is added to the stack the lockouts of all the votes in the stack are doubled.  With each new vote a node commits the previous votes to a ever increasing lockout.  Since at 32 votes we can consider the system to be at `max lockout` any votes with a lockout above 1<<32 are dequeued.  Dequeuing a vote is the trigger for a reward.
 
 
 ### Rollback
@@ -28,7 +28,7 @@ vote time | lockout | lock time
         4 |      2  |         6
         3 |      4  |         7
         2 |      8  |        10
-        1 |      16 |        l7
+        1 |      16 |        17
 ```
 If the next vote is at time 9 the resulting state will be
 ```
@@ -36,7 +36,7 @@ vote time | lockout | lock time
 -------------------------------
         9 |      2  |        11
         2 |      8  |        10
-        1 |      16 |        l7
+        1 |      16 |        17
 ```                              
 Next vote is at time 10
 ```
@@ -45,7 +45,7 @@ vote time | lockout | lock time
        10 |      2  |        12
         9 |      4  |        13
         2 |      8  |        10
-        1 |      16 |        l7
+        1 |      16 |        17
 ```                               
 At time 10 the new votes caught up to the previous votes.  But the vote created at time 2 expires at 10, so the when next vote at time 11 is applied the entire stack will unroll.
 
@@ -53,7 +53,7 @@ At time 10 the new votes caught up to the previous votes.  But the vote created 
 vote time | lockout | lock time
 -------------------------------
        11 |      2  |        13
-        1 |      16 |        l7
+        1 |      16 |        17
 ```                                
 
 ### Slashing and Rewards
