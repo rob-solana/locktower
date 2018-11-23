@@ -376,7 +376,7 @@ mod test {
                 let cmap = calc_converge_map(&network, &tree);
                 let lca = calc_lca(&network, &tree);
                 println!(
-                    "{} {} {} {} {}",
+                    "{} {} {:?} {}",
                     time,
                     calc_converged(&cmap),
                     lca,
