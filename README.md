@@ -6,7 +6,7 @@ Lock Tower is an implementation of Nakomoto Consensus with time based locks. It 
 
 * rollback requires exponentially more time for older votes then for newer votes.
 
-* Nodes can independently configure how much convergence in voting they would like to see before committing a vote to a higher lockout.  This allows each node to make a trade-off of risk and reward.
+* Nodes can independently configure a vote threshold they would like to see before committing a vote to a higher lockout.  This allows each node to make a trade-off of risk and reward.
 
 ## Time
 
@@ -19,9 +19,7 @@ The basic idea to this approach is to stack consensus votes.  Each consensus vot
 
 ### Rollback
 
-Before a vote is pushed to the stack, all the votes leading up to vote with a lower lock time then the new vote are purged.
-
-After rollback lockouts are not doubled until the node catches up to the rollback height of votes.
+Before a vote is pushed to the stack, all the votes leading up to vote with a lower lock time then the new vote are purged.  After rollback lockouts are not doubled until the node catches up to the rollback height of votes.
 
 For example, a vote stack with the following state:
 ```
@@ -50,6 +48,7 @@ vote time | lockout | lock time
         1 |      16 |        l7
 ```                               
 At time 10 the new votes caught up to the previous votes.  But the vote created at time 2 expires at 10, so the when next vote at time 11 is applied the entire stack will unroll.
+
 ```
 vote time | lockout | lock time
 -------------------------------
@@ -62,6 +61,10 @@ vote time | lockout | lock time
 The purpose of the lockouts is to force a node to commit time to a specific branch.  Nodes that violate the lockouts and vote for a diverging branch within the lockout should be punished.
 
 Nodes should be rewarded for selecting the right branch with the rest of the network as often as possible.  This is well aligned with generating a reward when the vote stack is full and the oldest vote needs to be dequeued.
+ 
+### Thresholds
+
+Each node can independently set a threshold of network commitment to a branch before that node commits to a branch.  For example, at vote stack index 7, the lockout is 256 time units.  A node may withhold votes and let votes 1-7 expire unless the vote at index 8 has at greater than 50% commitment in the network.  This allows each node to independently control how much risk to commit to a branch.  Committing to a branch faster would allow the node to earn more rewards.
 
 ### Impact of Receive Errors
 
