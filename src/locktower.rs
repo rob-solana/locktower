@@ -53,49 +53,75 @@ impl Vote {
 }
 
 #[derive(Debug)]
-pub struct VoteLocks {
+pub struct LockTower {
     votes: VecDeque<Vote>,
     max_size: usize,
-    max_height: usize,
-    trunk_branch: Branch,
 }
 
-impl VoteLocks {
-    pub fn new(max_size: usize, max_height: usize, trunk_branch: Branch) -> Self {
-        VoteLocks {
+impl LockTower {
+    pub fn new(max_size: usize) -> Self {
+        Self {
             votes: VecDeque::new(),
             max_size,
-            max_height,
-            trunk_branch,
         }
     }
-    fn rollback(&mut self, height: usize) -> usize {
-        let num_old = self
-            .votes
-            .iter()
-            .take_while(|v| v.lock_height() < height)
-            .count();
-        for _ in 0..num_old {
+    pub fn push_vote(
+        &mut self,
+        vote: Vote,
+        branch_tree: &HashMap<usize, Branch>,
+        converge_map: &HashMap<usize, usize>,
+        depth: usize,
+    ) -> bool {
+        self.rollback(vote.height);
+        if !self.is_valid(&vote, branch_tree) {
+            return false;
+        }
+        if !self.is_converged(converge_map, depth) {
+            return false;
+        }
+        self.enter_vote(vote);
+        if self.is_full() {
+            self.pop_full();
+        }
+        true
+    }
+    fn is_converged(&self, converge_map: &HashMap<usize, usize>, depth: usize) -> bool {
+        self.get_vote(depth)
+            .map(|v| *converge_map.get(&v.branch.id).unwrap_or(&0) > 50)
+            .unwrap_or(true)
+    }
+
+    fn rollback(&mut self, height: usize) {
+        let mut last: isize = -1;
+        for (i, v) in self.votes.iter().enumerate() {
+            if v.lock_height() < height {
+                last = i as isize;
+            }
+        }
+        for _ in 0..(last + 1) {
             self.votes.pop_front();
         }
-        num_old
     }
-    pub fn push_vote(&mut self, vote: Vote) {
-        assert!(vote.height <= vote.height);
+    fn is_valid(&mut self, vote: &Vote, branch_tree: &HashMap<usize, Branch>) -> bool {
+        for v in &self.votes {
+            if !v.is_trunk_of(&vote, branch_tree) {
+                return false;
+            }
+        }
+        true
+    }
+    fn enter_vote(&mut self, vote: Vote) {
         assert!(!self.is_full());
         // double the previous lockouts
-        for v in &mut self.votes {
-            v.lockout *= 2;
+        for (i, v) in self.votes.iter_mut().enumerate() {
+            assert!(v.height <= vote.height);
+            if (v.lockout + 1) < 1 << (i + 2) {
+                v.lockout *= 2;
+            }
         }
+        assert_eq!(vote.lockout, 2);
         // push the new vote to the font
         self.votes.push_front(vote);
-    }
-    fn append(&mut self, mut other: Self, branch_tree: &HashMap<usize, Branch>) {
-        for _ in 0..other.votes.len() {
-            let v = other.votes.pop_back().unwrap();
-            assert!(self.last_branch().is_trunk_of(&v.branch, branch_tree));
-            self.votes.push_front(v);
-        }
     }
     fn pop_full(&mut self) {
         assert!(self.is_full());
@@ -104,9 +130,6 @@ impl VoteLocks {
     fn is_full(&self) -> bool {
         assert!(self.votes.len() <= self.max_size);
         self.votes.len() == self.max_size
-    }
-    fn is_empty(&self) -> bool {
-        self.votes.is_empty()
     }
     fn last_vote(&self) -> Option<&Vote> {
         self.votes.front()
@@ -117,110 +140,15 @@ impl VoteLocks {
     pub fn first_vote(&self) -> Option<&Vote> {
         self.votes.back()
     }
-    fn last_branch(&self) -> Branch {
+    pub fn last_branch(&self) -> Branch {
         self.last_vote()
             .map(|v| v.branch.clone())
-            .unwrap_or(self.trunk_branch.clone())
+            .unwrap_or(Branch::default())
     }
-    pub fn is_vote_valid(&self, vote: &Vote, branch_tree: &HashMap<usize, Branch>) -> bool {
-        self.last_vote()
-            .map(|v| v.is_trunk_of(vote, branch_tree))
-            .unwrap_or(self.trunk_branch.is_trunk_of(&vote.branch, branch_tree))
-    }
-}
-
-pub struct LockTower {
-    vote_locks: Vec<VoteLocks>,
 }
 
 pub const MAX_VOTES: usize = 32usize;
 pub const FINALITY_DEPTH: usize = 8;
-
-impl Default for LockTower {
-    fn default() -> Self {
-        let mut vote_locks = Vec::new();
-        vote_locks.push(VoteLocks::new(MAX_VOTES, 1 << MAX_VOTES, Branch::default()));
-        Self { vote_locks }
-    }
-}
-
-impl LockTower {
-    fn rollback(&mut self, height: usize) {
-        let num_old = self
-            .vote_locks
-            .iter()
-            .rev()
-            .take_while(|v| v.max_height < height)
-            .count();
-        for _ in 0..num_old {
-            self.vote_locks.pop();
-        }
-        assert!(!self.vote_locks.is_empty());
-    }
-    fn collapse(&mut self, branch_tree: &HashMap<usize, Branch>) {
-        loop {
-            if self.vote_locks.len() == 1 {
-                break;
-            }
-            if !self.last_q().is_full() {
-                break;
-            }
-            let full = self.vote_locks.pop().unwrap();
-            println!("collapse of q {}", full.votes.len());
-            self.last_q_mut().append(full, branch_tree);
-        }
-    }
-    fn last_q_mut(&mut self) -> &mut VoteLocks {
-        self.vote_locks.last_mut().unwrap()
-    }
-    fn last_q(&self) -> &VoteLocks {
-        self.vote_locks.last().unwrap()
-    }
-    // if the vote at depth is not common with more then 50% of the network then we should fail
-    // this vote until it is common, or enough votes get unrolled
-    pub fn is_converged(&self, converge_map: &HashMap<usize, usize>, depth: usize) -> bool {
-        self.last_q()
-            .get_vote(depth)
-            .map(|v| *converge_map.get(&v.branch.id).unwrap_or(&0) > 50)
-            .unwrap_or(true)
-    }
-    pub fn push_vote(
-        &mut self,
-        vote: Vote,
-        branch_tree: &HashMap<usize, Branch>,
-        converge_map: &HashMap<usize, usize>,
-        depth: usize,
-    ) -> bool {
-        self.rollback(vote.height);
-        let num_old = self.last_q_mut().rollback(vote.height);
-        if num_old > 0 && !self.last_q().is_empty() {
-            println!("rollback votes: {}", num_old);
-            let last_vote = self.last_q().last_vote().unwrap().clone();
-            self.vote_locks.push(VoteLocks::new(
-                num_old,
-                last_vote.lock_height(),
-                last_vote.branch,
-            ));
-        }
-        if !self.last_q().is_vote_valid(&vote, branch_tree) {
-            return false;
-        }
-        if !self.is_converged(converge_map, depth) {
-            return false;
-        }
-        self.last_q_mut().push_vote(vote);
-        self.collapse(branch_tree);
-        if self.last_q().is_full() {
-            assert_eq!(self.vote_locks.len(), 1);
-            self.last_q_mut().pop_full();
-        }
-        true
-    }
-
-    pub fn last_branch(&self) -> Branch {
-        self.last_q().last_branch()
-    }
-}
 
 #[cfg(test)]
 mod test {
@@ -259,58 +187,59 @@ mod test {
     }
     #[test]
     fn test_push_vote() {
-        let mut tree = HashMap::new();
+        let tree = HashMap::new();
         let cmap = HashMap::new();
         let b0 = Branch { id: 0, base: 0 };
-        let mut node = LockTower::default();
+        let mut node = LockTower::new(32);
         let vote = Vote::new(b0.clone(), 0);
         assert!(node.push_vote(vote, &tree, &cmap, 32));
+        assert_eq!(node.votes.len(), 1);
 
         let vote = Vote::new(b0.clone(), 1);
         assert!(node.push_vote(vote, &tree, &cmap, 32));
+        assert_eq!(node.votes.len(), 2);
 
         let vote = Vote::new(b0.clone(), 2);
         assert!(node.push_vote(vote, &tree, &cmap, 32));
+        assert_eq!(node.votes.len(), 3);
 
         let vote = Vote::new(b0.clone(), 3);
         assert!(node.push_vote(vote, &tree, &cmap, 32));
+        assert_eq!(node.votes.len(), 4);
 
-        assert_eq!(node.last_q().votes.len(), 4);
-        assert_eq!(node.last_q().votes[0].lockout, 2);
-        assert_eq!(node.last_q().votes[1].lockout, 4);
-        assert_eq!(node.last_q().votes[2].lockout, 8);
-        assert_eq!(node.last_q().votes[3].lockout, 16);
+        assert_eq!(node.votes[0].lockout, 2);
+        assert_eq!(node.votes[1].lockout, 4);
+        assert_eq!(node.votes[2].lockout, 8);
+        assert_eq!(node.votes[3].lockout, 16);
 
-        assert_eq!(node.last_q().votes[1].lock_height(), 6);
-        assert_eq!(node.last_q().votes[2].lock_height(), 9);
+        assert_eq!(node.votes[1].lock_height(), 6);
+        assert_eq!(node.votes[2].lock_height(), 9);
 
         let vote = Vote::new(b0.clone(), 7);
         assert!(node.push_vote(vote, &tree, &cmap, 32));
 
-        assert_eq!(node.vote_locks.len(), 2);
-        assert_eq!(node.last_q().votes[0].lockout, 2);
+        assert_eq!(node.votes[0].lockout, 2);
 
         let b1 = Branch { id: 1, base: 1 };
         let vote = Vote::new(b1.clone(), 8);
         assert!(!node.push_vote(vote, &tree, &cmap, 32));
-        assert_eq!(node.vote_locks.len(), 2);
 
         let vote = Vote::new(b0.clone(), 8);
         assert!(node.push_vote(vote, &tree, &cmap, 32));
 
-        assert_eq!(node.vote_locks.len(), 1);
-        assert_eq!(node.last_q().votes[0].lockout, 2);
-        assert_eq!(node.last_q().votes[1].lockout, 4);
-        assert_eq!(node.last_q().votes[2].lockout, 8);
-        assert_eq!(node.last_q().votes[3].lockout, 16);
+        assert_eq!(node.votes.len(), 4);
+        assert_eq!(node.votes[0].lockout, 2);
+        assert_eq!(node.votes[1].lockout, 4);
+        assert_eq!(node.votes[2].lockout, 8);
+        assert_eq!(node.votes[3].lockout, 16);
 
         let vote = Vote::new(b0.clone(), 10);
         assert!(node.push_vote(vote, &tree, &cmap, 32));
-        assert_eq!(node.vote_locks.len(), 2);
+        assert_eq!(node.votes.len(), 2);
     }
 
     fn create_network(sz: usize) -> Vec<LockTower> {
-        (0..sz).into_iter().map(|_| LockTower::default()).collect()
+        (0..sz).into_iter().map(|_| LockTower::new(32)).collect()
     }
     fn calc_converge_map(
         network: &Vec<LockTower>,
@@ -332,7 +261,9 @@ mod test {
         cmap
     }
     fn calc_converged(cmap: &HashMap<usize, usize>) -> usize {
-        *cmap.values().min().unwrap_or(&0)
+        let len: usize = cmap.values().len();
+        let sum: usize = cmap.values().sum();
+        sum / len
     }
     #[test]
     fn test_no_partitions() {
@@ -357,7 +288,7 @@ mod test {
         let mut tree = HashMap::new();
         let len = 100;
         let mut network = create_network(len);
-        let fail_rate = 0.4;
+        let fail_rate = 0.5;
         let warmup = 7;
         for height in 0..warmup {
             let cmap = calc_converge_map(&network, &tree);
@@ -368,15 +299,14 @@ mod test {
                     tree.insert(branch.id, branch.clone());
                 }
                 let vote = Vote::new(branch, height);
-                assert!(node.last_q().is_vote_valid(&vote, &tree));
+                assert!(node.is_valid(&vote, &tree));
                 assert!(node.push_vote(vote.clone(), &tree, &cmap, warmup));
             }
         }
         for node in network.iter() {
-            assert_eq!(node.last_q().votes.len(), warmup);
-            assert_eq!(node.last_q().first_vote().unwrap().lockout, 1 << warmup);
-            assert!(node.last_q().max_height > 1 << warmup);
-            assert!(node.last_q().first_vote().unwrap().lock_height() >= 1 << warmup);
+            assert_eq!(node.votes.len(), warmup);
+            assert_eq!(node.first_vote().unwrap().lockout, 1 << warmup);
+            assert!(node.first_vote().unwrap().lock_height() >= 1 << warmup);
         }
         let cmap = calc_converge_map(&network, &tree);
         assert_ne!(calc_converged(&cmap), len);
@@ -390,7 +320,6 @@ mod test {
                     if thread_rng().gen_range(0f64, 1.0f64) < fail_rate {
                         continue;
                     }
-                    println!("{:?}", node.last_q());
                     node.push_vote(vote.clone(), &tree, &cmap, warmup);
                 }
                 let cmap = calc_converge_map(&network, &tree);
