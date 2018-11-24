@@ -22,39 +22,37 @@ The basic idea to this approach is to stack consensus votes.  Each consensus vot
 Before a vote is pushed to the stack, all the votes leading up to vote with a lower lock time than the new vote are purged.  After rollback lockouts are not doubled until the node catches up to the rollback height of votes.
 
 For example, a vote stack with the following state:
-```
-vote time | lockout | lock time
--------------------------------
-        4 |      2  |         6
-        3 |      4  |         7
-        2 |      8  |        10
-        1 |      16 |        17
-```
+
+| vote time | lockout | lock time |
+|----------:|--------:|----------:|
+|         4 |      2  |         6 |
+|         3 |      4  |         7 |
+|         2 |      8  |        10 |
+|         1 |      16 |        17 |
+
 If the next vote is at time 9 the resulting state will be
-```
-vote time | lockout | lock time
--------------------------------
-        9 |      2  |        11
-        2 |      8  |        10
-        1 |      16 |        17
-```                              
+
+| vote time | lockout | lock time |
+|----------:|--------:|----------:|
+|         9 |      2  |        11 |
+|         2 |      8  |        10 |
+|         1 |      16 |        17 |
+                              
 Next vote is at time 10
-```
-vote time | lockout | lock time
--------------------------------
-       10 |      2  |        12
-        9 |      4  |        13
-        2 |      8  |        10
-        1 |      16 |        17
-```                               
+
+| vote time | lockout | lock time |
+|----------:|--------:|----------:|
+|        10 |       2 |        12 |
+|         9 |       4 |        13 |
+|         2 |       8 |        10 |
+|         1 |      16 |        17 |
+                               
 At time 10 the new votes caught up to the previous votes.  But the vote created at time 2 expires at 10, so the when next vote at time 11 is applied the entire stack will unroll.
 
-```
-vote time | lockout | lock time
--------------------------------
-       11 |      2  |        13
-        1 |      16 |        17
-```                                
+| vote time | lockout | lock time |
+|----------:|--------:|----------:|
+|        11 |       2 |        13 |
+|         1 |      16 |        17 |
 
 ### Slashing and Rewards
 
