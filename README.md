@@ -62,7 +62,7 @@ Nodes should be rewarded for selecting the right branch with the rest of the net
  
 ### Thresholds
 
-Each node can independently set a threshold of network commitment to a branch before that node commits to a branch.  For example, at vote stack index 7, the lockout is 256 time units.  A node may withhold votes and let votes 1-7 expire unless the vote at index 8 has at greater than 50% commitment in the network.  This allows each node to independently control how much risk to commit to a branch.  Committing to a branch faster would allow the node to earn more rewards.
+Each node can independently set a threshold of network commitment to a branch before that node commits to a branch.  For example, at vote stack index 7, the lockout is 256 time units.  A node may withhold votes and let votes 0-7 expire unless the vote at index 7 has at greater than 50% commitment in the network.  This allows each node to independently control how much risk to commit to a branch.  Committing to a branch faster would allow the node to earn more rewards.
 
 ### Impact of Receive Errors
 
