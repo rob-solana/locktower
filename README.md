@@ -11,7 +11,7 @@ LockTower is Solana's *Nakomoto Branch Selection* algorithm based on time locks.
 
 For networks like Solana time can be the PoH hash count which is a VDF that provides a source of time before consensus. Other networks adopting this approach would need to consider a global source of time.
 
-For solana `time` uniquely identifies a specific leader for branch generation.  At any given time only 1 leader which can be computed from the ledger itself can propose a branch.  For more details see [bgranch generation](0002-consensus.md) and [leader rotation](0004-leader-rotation.md).
+For solana `time` uniquely identifies a specific leader for branch generation.  At any given time only 1 leader which can be computed from the ledger itself can propose a branch.  For more details see [branch generation](0002-consensus.md) and [leader rotation](0004-leader-rotation.md).
 
 ## Algorithm
 
