@@ -11,6 +11,8 @@ LockTower is Solana's *Nakomoto Branch Selection* algorithm based on time locks.
 
 For networks like Solana time can be the PoH hash count which is a VDF that provides a source of time before consensus. Other networks adopting this approach would need to consider a global source of time.
 
+For solana `time` uniquely identifies a specific leader for branch generation.  At any given time only 1 leader which can be computed from the ledger itself can propose a branch.  For more details see [bgranch generation](0002-consensus.md) and [leader rotation](0004-leader-rotation.md).
+
 ## Algorithm
 
 The basic idea to this approach is to stack consensus votes.  Votes in the stack must be for branches that are descendent from each other, and for branches that are valid in the ledger they are submitted to.  Each consensus vote has a `lockout` in unites of time before it can be discarded.  When a vote is added to the stack the lockouts of all the previous votes in the stack are doubled (see [Rollback](#Rollback)).  With each new vote a voter commits the previous votes to a ever increasing lockout.  Since at 32 votes we can consider the system to be at `max lockout` any votes with a lockout above 1<<32 are dequeued.  Dequeuing a vote is the trigger for a reward.  If a vote expires before it is dequeued, it and all the votes above it are popped from the vote stack.  The voter needs to start rebuilding the stack from that point.
@@ -46,12 +48,14 @@ Next vote is at time 10
 |         2 |       8 |                   10 |
 |         1 |      16 |                   17 |
                                
-At time 10 the new votes caught up to the previous votes.  But the vote created at time 2 expires at 10, so the when next vote at time 11 is applied the entire stack will unroll.
+At time 10 the new votes caught up to the previous votes.  But the vote created at time 2 expires at 10, so the when next vote at time 11 is applied the votes including and above `vote 2` will be popped.
 
 | vote time | lockout | lock expiration time |
 |----------:|--------:|---------------------:|
 |        11 |       2 |                   13 |
 |         1 |      16 |                   17 |
+
+The lockout for `vote 1` will not increase from 16 until the stack is rebuilt and a 5th vote is added.  The fifth vote must occur on or before time 17.
 
 ### Slashing and Rewards
 
