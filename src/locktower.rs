@@ -87,6 +87,7 @@ impl LockTower {
         }
         true
     }
+    /// check if the vote at `depth` has over 50% of the network committed
     fn is_converged(&self, converge_map: &HashMap<usize, usize>, depth: usize) -> bool {
         self.get_vote(depth)
             .map(|v| {
@@ -97,6 +98,7 @@ impl LockTower {
             }).unwrap_or(true)
     }
 
+    /// if a vote is expired, pop it and all the votes leading up to it
     fn rollback(&mut self, time: usize) {
         let mut last: isize = -1;
         for (i, v) in self.votes.iter().enumerate() {
@@ -108,16 +110,9 @@ impl LockTower {
             self.votes.pop_front();
         }
     }
+    /// only add votes that are descendent from the last vote in the stack
     fn is_valid(&mut self, vote: &Vote, branch_tree: &HashMap<usize, Branch>) -> bool {
-        if !self.branch_trunk.is_trunk_of(&vote.branch, branch_tree) {
-            return false;
-        }
-        for v in &self.votes {
-            if !v.is_trunk_of(&vote, branch_tree) {
-                return false;
-            }
-        }
-        true
+        self.last_branch().is_trunk_of(&vote.branch, branch_tree)
     }
     fn enter_vote(&mut self, vote: Vote) {
         let vote_time = vote.time;
@@ -153,12 +148,9 @@ impl LockTower {
     pub fn last_branch(&self) -> Branch {
         self.last_vote()
             .map(|v| v.branch.clone())
-            .unwrap_or(Branch::default())
+            .unwrap_or(self.branch_trunk.clone())
     }
 }
-
-pub const MAX_VOTES: usize = 32usize;
-pub const FINALITY_DEPTH: usize = 8;
 
 #[cfg(test)]
 mod test {
@@ -253,6 +245,8 @@ mod test {
     fn create_network(sz: usize) -> Vec<LockTower> {
         (0..sz).into_iter().map(|_| LockTower::new(32)).collect()
     }
+
+    /// The "height" or "depth" of this branch. How many branches until it connects to branch 0
     fn calc_branch_depth(branch_tree: &HashMap<usize, Branch>, id: usize) -> usize {
         let mut depth = 0;
         let mut start = branch_tree.get(&id);
@@ -265,6 +259,9 @@ mod test {
         }
         depth
     }
+    /// map of `branch id` to `node count`
+    /// This map contains how many nodes have the branch as an ancestor
+    /// The branch with the highest count that is the newest is the network "trunk"
     fn calc_branch_map(
         network: &Vec<LockTower>,
         branch_tree: &HashMap<usize, Branch>,
@@ -282,11 +279,14 @@ mod test {
         }
         lca_map
     }
+    /// find the branch with the highest count of nodes that have it as an ancestor
+    /// as well as with the highest possible branch id, which indicates it is the newest
     fn calc_newest_trunk(bmap: &HashMap<usize, usize>) -> (usize, usize) {
         let mut data: Vec<_> = bmap.iter().collect();
         data.sort_by_key(|x| (x.1, x.0));
         data.last().map(|v| (*v.0, *v.1)).unwrap()
     }
+    /// how common is the latest branch of all the nodes
     fn calc_tip_converged(network: &Vec<LockTower>, bmap: &HashMap<usize, usize>) -> usize {
         let sum: usize = network
             .iter()
@@ -393,6 +393,7 @@ mod test {
         assert_eq!(trunk.1, len);
     }
     #[test]
+    #[ignore]
     fn test_all_partitions() {
         test_with_partitions(100, 0.2)
     }
@@ -401,6 +402,7 @@ mod test {
         test_with_partitions(2, 0.0)
     }
     #[test]
+    #[ignore]
     fn test_3_partitions() {
         test_with_partitions(3, 0.9)
     }
